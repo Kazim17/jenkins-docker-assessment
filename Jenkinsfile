@@ -28,7 +28,8 @@ pipeline {
         stage('3. Build Production Image') {
             steps {
                 script {
-                    sh "docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} -t ${DOCKER_IMAGE}:latest ."
+                    // --pull=false reuses the base image fetched in Stage 2 to avoid proxy errors
+                    sh "docker build --pull=false -t ${DOCKER_IMAGE}:${BUILD_NUMBER} -t ${DOCKER_IMAGE}:latest ."
                 }
             }
         }
@@ -78,20 +79,23 @@ pipeline {
     post {
         failure {
             script {
-                sh """
-                    PREV_BUILD=\$((\${BUILD_NUMBER} - 1))
-                    if [ \$PREV_BUILD -gt 0 ]; then
-                        BUILD_NUMBER=\$PREV_BUILD \
-                        DOCKER_IMAGE=\${DOCKER_IMAGE} \
-                        APP_PORT=\${APP_PORT} \
+                echo 'Build failed. Attempting automated rollback...'
+                PREV_BUILD = (BUILD_NUMBER.toInteger() - 1)
+                if (PREV_BUILD > 0) {
+                    sh """
+                        BUILD_NUMBER=${PREV_BUILD} \
+                        DOCKER_IMAGE=${DOCKER_IMAGE} \
+                        APP_PORT=${APP_PORT} \
                         docker-compose up -d
-                    fi
-                """
+                    """
+                } else {
+                    echo 'No previous build available for rollback.'
+                }
             }
         }
         always {
+            // Only prune old images; keep workspace files intact for rollback logic
             sh 'docker image prune -f'
-            cleanWs()
         }
     }
 }
